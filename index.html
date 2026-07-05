@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HealthTrack Pro — Veg & Mess Menu</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -573,12 +574,13 @@
     <button class="nav-tab" onclick="switchTab('water')">💧 Water</button>
     <button class="nav-tab" onclick="switchTab('body')">⚖️ Body Stats</button>
     <button class="nav-tab" onclick="switchTab('summary')">📈 Summary</button>
+    <button class="nav-tab" onclick="switchTab('tracker'); viewTracker('daily');">📅 Tracker</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════
      MAIN CONTENT
 ════════════════════════════════════════════════════ -->
-<div class="main">
+<div class="main">		
 
 <!-- ─────────────────────────────────────────────────
      DASHBOARD SECTION
@@ -1067,6 +1069,33 @@
         </div>
     </div>
 
+</section>
+
+<!-- ─────────────────────────────────────────────────
+     TRACKER SECTION
+───────────────────────────────────────────────── -->
+<section class="section fade-in" id="sec-tracker">
+    <div class="card">
+        <div class="card-title">📊 Macro & Progress Tracker</div>
+        
+        <div class="category-filter" style="margin-bottom: 20px;">
+            <button class="cat-btn active" onclick="viewTracker('daily')">Daily</button>
+            <button class="cat-btn" onclick="viewTracker('weekly')">Weekly</button>
+            <button class="cat-btn" onclick="viewTracker('monthly')">Monthly</button>
+        </div>
+        
+        <div id="chartContainer" style="margin-bottom: 20px; padding: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; display: none;">
+            <canvas id="progressChart"></canvas>
+        </div>
+
+        <div id="trackerDisplay" style="max-height: 300px; overflow-y: auto; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 12px; padding: 10px;">
+            </div>
+        
+        <div class="grid-2">
+            <button class="btn btn-primary btn-full" onclick="saveTodayData()">💾 Save Today's Data</button>
+            <button class="btn btn-danger btn-full" onclick="clearTrackerData()">🗑️ Clear History</button>
+        </div>
+    </div>
 </section>
 
 </div><!-- end .main -->
@@ -5165,6 +5194,157 @@ document.addEventListener('visibilitychange', () => {
         updateAllDisplays();
     }
 });
+
+// ============================================================
+//  HISTORY TRACKER WITH ALL MACROS, SUGAR & FIBER
+// ============================================================
+const TRACKER_STORAGE_KEY = 'healthTrackPro_history';
+let progressChartInstance = null; 
+
+function getTrackerHistory() {
+    return JSON.parse(localStorage.getItem(TRACKER_STORAGE_KEY)) || {};
+}
+
+// Smart tool to find the element and strip out everything except the number (ignores "g", "kcal", etc.)
+function getNumberFromUI(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return 0; 
+    const text = el.innerText || el.textContent;
+    const match = text.match(/\d+/); 
+    return match ? parseInt(match[0]) : 0;
+}
+
+function saveTodayData() {
+    const today = new Date().toISOString().split('T')[0]; 
+    
+    // 👇 MAKE SURE THESE SELECTORS MATCH YOUR HTML IDs OR CLASSES 👇
+    let cals = getNumberFromUI('#p-cal'); 
+    let protein = getNumberFromUI('#p-protein');
+    let carbs = getNumberFromUI('#p-carbs');
+    let fats = getNumberFromUI('#p-fat');
+    let sugars = getNumberFromUI('#p-sugar');
+    let fiber = getNumberFromUI('#p-fiber'); // Added Fiber
+    
+    let water = document.querySelectorAll('.water-cup.filled').length || 0;
+
+    let history = getTrackerHistory();
+    history[today] = {
+        calories: cals, water: water,
+        protein: protein, carbs: carbs, fats: fats, sugars: sugars, fiber: fiber,
+        timestamp: new Date().getTime()
+    };
+    
+    localStorage.setItem(TRACKER_STORAGE_KEY, JSON.stringify(history));
+    
+    if(typeof showToast === 'function') showToast('Macro data saved!', 'success');
+    else alert('Macro data saved successfully!');
+    
+    viewTracker('daily'); 
+}
+
+function viewTracker(viewType) {
+    document.querySelectorAll('#sec-tracker .cat-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if(btn.innerText.toLowerCase() === viewType) btn.classList.add('active');
+    });
+
+    const displayDiv = document.getElementById('trackerDisplay');
+    const chartContainer = document.getElementById('chartContainer');
+    const history = getTrackerHistory();
+    const dates = Object.keys(history).sort((a,b) => new Date(a) - new Date(b));
+
+    if(dates.length === 0) {
+        chartContainer.style.display = 'none';
+        displayDiv.innerHTML = '<div class="empty-state">No data saved yet. Log some macros!</div>';
+        return;
+    }
+
+    chartContainer.style.display = 'block';
+    
+    // Added Fib (g) to the table header
+    let html = '<table class="summary-table" style="width:100%; font-size: 0.8em; text-align:center;"><tr><th>Date</th><th>Cals</th><th>Pro</th><th>Carb</th><th>Fat</th><th>Sug</th><th>Fib</th></tr>';
+
+    let labels = [], calData = [], proData = [], carbData = [], fatData = [], sugData = [], fibData = [];
+
+    if (viewType === 'daily') {
+        [...dates].reverse().forEach(date => {
+            const d = history[date];
+            html += `<tr><td>${date.slice(5)}</td><td>${d.calories}</td><td>${d.protein||0}</td><td>${d.carbs||0}</td><td>${d.fats||0}</td><td>${d.sugars||0}</td><td>${d.fiber||0}</td></tr>`;
+        });
+        dates.forEach(date => {
+            labels.push(date.slice(5));
+            const d = history[date];
+            calData.push(d.calories); proData.push(d.protein||0); carbData.push(d.carbs||0); fatData.push(d.fats||0); sugData.push(d.sugars||0); fibData.push(d.fiber||0);
+        });
+    } else {
+        let grouped = {};
+        dates.forEach(date => {
+            const dObj = new Date(date);
+            let groupKey = viewType === 'weekly' 
+                ? `Wk ${Math.ceil((((dObj - new Date(dObj.getFullYear(), 0, 1)) / 86400000) + new Date(dObj.getFullYear(), 0, 1).getDay() + 1) / 7)}`
+                : dObj.toLocaleString('default', { month: 'short' });
+            
+            if(!grouped[groupKey]) grouped[groupKey] = { calories: 0, protein: 0, carbs: 0, fats: 0, sugars: 0, fiber: 0, count: 0 };
+            
+            grouped[groupKey].calories += history[date].calories || 0;
+            grouped[groupKey].protein += history[date].protein || 0;
+            grouped[groupKey].carbs += history[date].carbs || 0;
+            grouped[groupKey].fats += history[date].fats || 0;
+            grouped[groupKey].sugars += history[date].sugars || 0;
+            grouped[groupKey].fiber += history[date].fiber || 0;
+            grouped[groupKey].count++;
+        });
+
+        for(let key in grouped) {
+            const g = grouped[key];
+            const avg = (val) => Math.round(val / g.count);
+            
+            html += `<tr><td style="color:var(--primary); font-weight:700;">${key}</td><td>${avg(g.calories)}</td><td>${avg(g.protein)}</td><td>${avg(g.carbs)}</td><td>${avg(g.fats)}</td><td>${avg(g.sugars)}</td><td>${avg(g.fiber)}</td></tr>`;
+            
+            labels.push(key);
+            calData.push(avg(g.calories)); proData.push(avg(g.protein)); carbData.push(avg(g.carbs)); fatData.push(avg(g.fats)); sugData.push(avg(g.sugars)); fibData.push(avg(g.fiber));
+        }
+    }
+    
+    html += '</table>';
+    displayDiv.innerHTML = html;
+    renderChart(labels, calData, proData, carbData, fatData, sugData, fibData);
+}
+
+function renderChart(labels, cals, pro, carbs, fats, sugars, fiber) {
+    const ctx = document.getElementById('progressChart').getContext('2d');
+    if(progressChartInstance) progressChartInstance.destroy();
+
+    progressChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                { label: 'Calories', data: cals, borderColor: '#FF9800', backgroundColor: '#FF9800', yAxisID: 'y', tension: 0.3 },
+                { label: 'Protein (g)', data: pro, borderColor: '#4CAF50', backgroundColor: '#4CAF50', yAxisID: 'y1', tension: 0.3 },
+                { label: 'Carbs (g)', data: carbs, borderColor: '#2196F3', backgroundColor: '#2196F3', yAxisID: 'y1', tension: 0.3, hidden: true }, // Hidden by default
+                { label: 'Fats (g)', data: fats, borderColor: '#9C27B0', backgroundColor: '#9C27B0', yAxisID: 'y1', tension: 0.3, hidden: true },
+                { label: 'Sugars (g)', data: sugars, borderColor: '#E91E63', backgroundColor: '#E91E63', yAxisID: 'y1', tension: 0.3, hidden: true },
+                { label: 'Fiber (g)', data: fiber, borderColor: '#795548', backgroundColor: '#795548', yAxisID: 'y1', tension: 0.3, hidden: true }
+            ]
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Calories' } },
+                y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Macros (g)' }, grid: { drawOnChartArea: false } }
+            }
+        }
+    });
+}
+
+function clearTrackerData() {
+    if(confirm('Are you sure you want to delete all tracking history?')) {
+        localStorage.removeItem(TRACKER_STORAGE_KEY);
+        viewTracker('daily');
+    }
+}
 
 // ============================================================
 //  END OF SCRIPT
